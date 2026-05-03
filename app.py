@@ -43,7 +43,7 @@ st.title("Streamlit BLUEPRINT Agent Builder (smolagents)")
 st.sidebar.header("Project")
 page = st.sidebar.radio(
     "Navigate",
-    ["Home", "BLUEPRINT Builder", "Prompt Preview", "Code Preview", "Test Lab", "Version History", "Export"],
+    ["Home", "BLUEPRINT Builder", "Prompt Preview", "Code Preview", "Chat Lab", "Version History", "Export"],
 )
 
 if "spec" not in st.session_state:
@@ -62,6 +62,21 @@ if "builder_step" not in st.session_state:
     st.session_state.builder_step = 0
 
 spec: AgentSpec = st.session_state.spec
+
+
+def build_runtime_namespace(current_spec: AgentSpec) -> dict:
+    """Render generated code and execute it in an isolated namespace."""
+    generated_code = render_smolagents_code(current_spec, "Hugging Face")
+    runtime_ns: dict = {}
+    exec(generated_code, runtime_ns)
+    return runtime_ns
+
+
+def run_selected_tool(runtime_ns: dict, tool_name: str, user_prompt: str) -> str:
+    agent = runtime_ns["build_sagemind_agent"]()
+    if tool_name not in agent.tools:
+        raise ValueError(f"Tool '{tool_name}' not found in generated runtime.")
+    return str(agent.tools[tool_name].run(user_prompt))
 
 
 def load_capability_demo() -> None:
@@ -213,13 +228,41 @@ elif page == "Code Preview":
     code = render_smolagents_code(spec, backend)
     st.code(code, language="python")
 
-elif page == "Test Lab":
-    st.write("MVP local test harness (simulated).")
-    user_prompt = st.text_area("Single test prompt")
-    if st.button("Run test") and user_prompt:
-        st.write("**Agent answer**")
-        st.info("Simulation only in MVP: connect runtime agent execution in V2.")
-        st.write("**Pass/fail**: manual review required")
+elif page == "Chat Lab":
+    st.subheader("Run generated agent/tool")
+    st.caption("Execute the generated SageMind runtime from your current BLUEPRINT spec.")
+
+    mode = st.radio("Mode", ["Agent", "Tool"], horizontal=True)
+    user_prompt = st.text_area("Prompt", placeholder="Ask a question to run against your generated runtime")
+
+    tool_name = None
+    if mode == "Tool":
+        tool_names = [tool.name for tool in spec.interfaces_tools]
+        if tool_names:
+            tool_name = st.selectbox("Choose tool", tool_names)
+        else:
+            st.warning("No tools configured yet. Add a tool in BLUEPRINT Builder first.")
+
+    if st.button("Run"):
+        if not user_prompt.strip():
+            st.warning("Please provide a prompt.")
+        else:
+            try:
+                runtime_ns = build_runtime_namespace(spec)
+                with st.spinner("Running generated runtime..."):
+                    if mode == "Agent":
+                        runtime_agent = runtime_ns["build_sagemind_agent"]()
+                        result = runtime_agent.run(user_prompt)
+                    else:
+                        if not tool_name:
+                            st.stop()
+                        result = run_selected_tool(runtime_ns, tool_name, user_prompt)
+
+                st.write("**Response**")
+                st.success(str(result))
+            except Exception as exc:
+                st.error(f"Runtime execution failed: {exc}")
+                st.info("Tip: confirm your model credentials/environment for smolagents are configured.")
 
 elif page == "Version History":
     st.write("Save current version")
