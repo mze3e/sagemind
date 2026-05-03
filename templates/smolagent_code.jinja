@@ -1,39 +1,131 @@
-from smolagents import CodeAgent, ToolCallingAgent, InferenceClientModel
-from smolagents import tool
+"""Generated SageMind scaffold powered by smolagents.
 
-MODEL = InferenceClientModel()
+This file contains:
+- BaseTool: wraps prompt + callable tool execution
+- BaseAgent: wraps prompt + multi-tool reasoning agent
+- Generated tool subclasses from BLUEPRINT spec
+- Generated agent subclass from BLUEPRINT spec
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
+
+from smolagents import InferenceClientModel, Tool, ToolCallingAgent
+
+
+DEFAULT_MODEL = InferenceClientModel()
+
+
+class PromptTool(Tool):
+    """Adapter that turns a BaseTool into a smolagents Tool."""
+
+    def __init__(self, base_tool: "BaseTool") -> None:
+        self.base_tool = base_tool
+        super().__init__()
+
+    name = "prompt_tool"
+    description = "Base prompt-backed tool"
+    inputs = {"input_text": {"type": "string", "description": "User tool input"}}
+    output_type = "string"
+
+    def forward(self, input_text: str) -> str:
+        return self.base_tool.run(input_text)
+
+
+@dataclass
+class BaseTool:
+    key: str
+    name: str
+    description: str
+    system_prompt: str
+    function_body: Optional[Callable[[str], str]] = None
+    model: InferenceClientModel = DEFAULT_MODEL
+
+    def run(self, user_input: str, *args, **kwargs) -> str:
+        if self.function_body is not None:
+            return str(self.function_body(user_input, *args, **kwargs))
+
+        prompt = (
+            f"System Instructions:\n{self.system_prompt}\n\n"
+            f"User Input:\n{user_input}\n\n"
+            "Return only the final answer for this tool."
+        )
+        return str(self.model(prompt))
+
+    def as_smol_tool(self) -> Tool:
+        class _RuntimePromptTool(PromptTool):
+            name = self.key
+            description = self.description
+
+        return _RuntimePromptTool(self)
+
+
+@dataclass
+class BaseAgent:
+    key: str
+    name: str
+    description: str
+    system_prompt: str
+    tools: Dict[str, BaseTool] = field(default_factory=dict)
+    model: InferenceClientModel = DEFAULT_MODEL
+    max_steps: int = 8
+
+    def _build_runtime_agent(self) -> ToolCallingAgent:
+        smol_tools: List[Tool] = [tool.as_smol_tool() for tool in self.tools.values()]
+        return ToolCallingAgent(
+            tools=smol_tools,
+            model=self.model,
+            max_steps=self.max_steps,
+            instructions=self.system_prompt,
+            final_answer_checks=[lambda answer: len(str(answer).strip()) > 0],
+        )
+
+    def run(self, user_input: str) -> str:
+        runtime_agent = self._build_runtime_agent()
+        return str(runtime_agent.run(user_input))
+
 
 {% for t in spec.interfaces_tools %}
-@tool
-def {{ t.name }}(input_text: str) -> str:
-    """{{ t.description }} | permission={{ t.permission_level.value }}"""
+def _{{ t.name }}_impl(input_text: str) -> str:
 {{ t.function_body | indent(width=4, first=True) }}
+
+
+class {{ t.name|replace(' ','')|replace('-','_') }}Tool(BaseTool):
+    def __init__(self) -> None:
+        super().__init__(
+            key="{{ t.name }}",
+            name="{{ t.name }}",
+            description="{{ t.description }} | permission={{ t.permission_level.value }}",
+            system_prompt="""{{ spec.behaviour_values }}\n\n{{ spec.requirements }}""",
+            function_body=_{{ t.name }}_impl,
+            model=DEFAULT_MODEL,
+        )
 
 {% endfor %}
 
-def build_agent(mode: str = "tool"):
-    tools = [
-    {% for t in spec.interfaces_tools %}
-        {{ t.name }},
-    {% endfor %}
-    ]
-
-    if mode == "code":
-        return CodeAgent(
+class {{ spec.agent_name|replace(' ','')|replace('-','_') }}Agent(BaseAgent):
+    def __init__(self) -> None:
+        tools = {
+        {% for t in spec.interfaces_tools %}
+            "{{ t.name }}": {{ t.name|replace(' ','')|replace('-','_') }}Tool(),
+        {% endfor %}
+        }
+        super().__init__(
+            key="{{ spec.agent_name }}",
+            name="{{ spec.agent_name }}",
+            description="{{ spec.use_case }}",
+            system_prompt="""{{ spec.purpose }}\n\nValues:\n{{ spec.behaviour_values }}\n\nLimitations:\n{{ spec.limitations_non_goals }}\n\nRequirements:\n{{ spec.requirements }}\n\nHuman approval rules:\n{{ spec.human_approval_rules }}\n\nMemory mode: {{ spec.memory_mode.value }}\nMemory policy: {{ spec.memory_policy }}""",
             tools=tools,
-            model=MODEL,
-            max_steps=8,
-            additional_authorized_imports=["json", "math"],
+            model=DEFAULT_MODEL,
         )
 
-    return ToolCallingAgent(
-        tools=tools,
-        model=MODEL,
-        max_steps=8,
-        final_answer_checks=[lambda answer: len(str(answer)) > 0],
-    )
+
+def build_sagemind_agent() -> BaseAgent:
+    return {{ spec.agent_name|replace(' ','')|replace('-','_') }}Agent()
 
 
 if __name__ == "__main__":
-    agent = build_agent(mode="tool")
-    print(agent.run("Say hello and summarize your purpose."))
+    agent = build_sagemind_agent()
+    print(agent.run("Say hello and explain how you use tools."))
