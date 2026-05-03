@@ -8,10 +8,36 @@ import streamlit as st
 from generators.prompt_generator import render_system_prompt
 from generators.smolagents_generator import render_smolagents_code
 from schemas.blueprint_schema import AgentSpec, MemoryMode, PermissionLevel, TestCase, ToolSpec
-from storage.db import init_db, list_versions, save_version
+from storage.db import init_db, list_versions, load_draft, list_drafts, save_draft, save_version
 
 init_db()
 st.set_page_config(page_title="BLUEPRINT Agent Builder", layout="wide")
+st.markdown(
+    """
+    <style>
+        .main {
+            background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+        }
+        .hero {
+            background: linear-gradient(120deg, #1e3a8a 0%, #2563eb 55%, #7c3aed 100%);
+            border-radius: 1rem;
+            padding: 1.2rem 1.4rem;
+            color: #ffffff;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+            margin-bottom: 1rem;
+        }
+        .capability-card {
+            border: 1px solid #dbeafe;
+            border-radius: 0.9rem;
+            padding: 0.85rem;
+            background: #ffffff;
+            box-shadow: 0 4px 16px rgba(37, 99, 235, 0.08);
+            margin-bottom: 0.75rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("Streamlit BLUEPRINT Agent Builder (smolagents)")
 
 st.sidebar.header("Project")
@@ -32,25 +58,128 @@ if "spec" not in st.session_state:
         version_notes="",
     )
 
+if "builder_step" not in st.session_state:
+    st.session_state.builder_step = 0
+
 spec: AgentSpec = st.session_state.spec
 
+
+def load_capability_demo() -> None:
+    st.session_state.spec = AgentSpec(
+        agent_name="SupportOps Copilot",
+        use_case="Assist support teams by triaging customer issues, drafting responses, and routing urgent cases.",
+        behaviour_values="Be empathetic, concise, and transparent about uncertainty.",
+        limitations_non_goals="Cannot issue refunds directly, cannot access customer PII unless provided explicitly.",
+        purpose="Reduce first response time and improve ticket quality.",
+        parameters_configuration="Response style: concise. Escalate if payment/security/legal risk appears.",
+        requirements="Use approved knowledge base and summarize citations in every answer.",
+        version_notes="Demo preset for showcasing BLUEPRINT capabilities.",
+        human_approval_rules="Require human approval before any billing or account-permission action.",
+        memory_policy="Retain non-sensitive ticket context for 7 days; never store secrets.",
+        memory_mode=MemoryMode.SESSION,
+        interfaces_tools=[
+            ToolSpec(
+                name="search_kb",
+                description="Search knowledge base articles",
+                inputs="query: str",
+                outputs="Top 3 relevant articles",
+                function_body='return ["KB-102", "KB-212", "KB-998"]',
+                permission_level=PermissionLevel.READ_ONLY,
+            )
+        ],
+        examples=[
+            TestCase(
+                prompt="Customer says MFA codes fail after phone change.",
+                expected="Ask verification steps, propose secure recovery flow, and escalate if lockout persists.",
+                category="functional",
+            )
+        ],
+    )
+
+
 if page == "Home":
-    st.write("Create or load an agent specification using BLUEPRINT sections.")
+    st.markdown(
+        """
+        <div class="hero">
+            <h3 style="margin: 0 0 0.35rem 0;">Design production-ready AI agents faster</h3>
+            <p style="margin: 0; opacity: 0.95;">Build structured BLUEPRINT specs, test guardrails, generate prompts, and export runnable smolagents code from one place.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown('<div class="capability-card"><strong>🧠 Structured design</strong><br/>Capture use-case, values, limits, and operational requirements.</div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="capability-card"><strong>🛡️ Guardrails-first</strong><br/>Track approval rules, memory policy, and permissioned tools.</div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown('<div class="capability-card"><strong>⚙️ One-click outputs</strong><br/>Preview prompt + code and export artifacts for your runtime.</div>', unsafe_allow_html=True)
+
+    st.subheader("Quick start")
+    if st.button("Load capability demo"):
+        load_capability_demo()
+        st.success("Demo spec loaded. Open BLUEPRINT Builder, Prompt Preview, or Code Preview.")
 
 elif page == "BLUEPRINT Builder":
-    with st.form("builder"):
-        spec.agent_name = st.text_input("Agent name", value=spec.agent_name)
-        spec.use_case = st.text_area("Use case", value=spec.use_case)
-        spec.behaviour_values = st.text_area("Behaviour & Values", value=spec.behaviour_values)
-        spec.limitations_non_goals = st.text_area("Limitations & Non-Goals", value=spec.limitations_non_goals)
-        spec.purpose = st.text_area("Purpose", value=spec.purpose)
-        spec.parameters_configuration = st.text_area("Parameters & Configuration", value=spec.parameters_configuration)
-        spec.requirements = st.text_area("Requirements", value=spec.requirements)
-        spec.version_notes = st.text_area("Version notes", value=spec.version_notes)
-        spec.human_approval_rules = st.text_area("Human approval rules", value=spec.human_approval_rules)
-        spec.memory_policy = st.text_area("Memory policy", value=spec.memory_policy)
-        spec.memory_mode = MemoryMode(st.selectbox("Memory mode", [m.value for m in MemoryMode], index=0))
-        submitted = st.form_submit_button("Save draft")
+    steps = [
+        "Agent name",
+        "Use case",
+        "Behaviour & values",
+        "Limitations & non-goals",
+        "Purpose",
+        "Parameters & configuration",
+        "Requirements",
+        "Version notes",
+    ]
+
+    st.subheader("Step-by-step builder")
+    st.caption(f"Step {st.session_state.builder_step + 1} of {len(steps)}: {steps[st.session_state.builder_step]}")
+
+    draft_names = list_drafts()
+    selected_draft = st.selectbox("Load saved draft", ["(none)"] + draft_names)
+    if st.button("Load selected draft") and selected_draft != "(none)":
+        loaded = load_draft(selected_draft)
+        if loaded:
+            st.session_state.spec = loaded
+            spec = st.session_state.spec
+            st.success(f"Loaded draft: {selected_draft}")
+
+    with st.form("step_form"):
+        if st.session_state.builder_step == 0:
+            spec.agent_name = st.text_input("Agent name", value=spec.agent_name)
+        elif st.session_state.builder_step == 1:
+            spec.use_case = st.text_area("Use case", value=spec.use_case)
+        elif st.session_state.builder_step == 2:
+            spec.behaviour_values = st.text_area("Behaviour & Values", value=spec.behaviour_values)
+        elif st.session_state.builder_step == 3:
+            spec.limitations_non_goals = st.text_area("Limitations & Non-Goals", value=spec.limitations_non_goals)
+        elif st.session_state.builder_step == 4:
+            spec.purpose = st.text_area("Purpose", value=spec.purpose)
+        elif st.session_state.builder_step == 5:
+            spec.parameters_configuration = st.text_area("Parameters & Configuration", value=spec.parameters_configuration)
+        elif st.session_state.builder_step == 6:
+            spec.requirements = st.text_area("Requirements", value=spec.requirements)
+        elif st.session_state.builder_step == 7:
+            spec.version_notes = st.text_area("Version notes", value=spec.version_notes)
+
+        back = st.form_submit_button("⬅ Back")
+        next_btn = st.form_submit_button("Next ➡")
+
+    if back:
+        st.session_state.builder_step = max(0, st.session_state.builder_step - 1)
+        st.rerun()
+
+    if next_btn:
+        save_draft(spec)
+        st.success("Draft saved.")
+        st.session_state.builder_step = min(len(steps) - 1, st.session_state.builder_step + 1)
+        st.rerun()
+
+    st.divider()
+    st.subheader("Advanced sections")
+    spec.human_approval_rules = st.text_area("Human approval rules", value=spec.human_approval_rules)
+    spec.memory_policy = st.text_area("Memory policy", value=spec.memory_policy)
+    spec.memory_mode = MemoryMode(st.selectbox("Memory mode", [m.value for m in MemoryMode], index=[m.value for m in MemoryMode].index(spec.memory_mode.value)))
 
     st.subheader("Add tool")
     with st.form("tool_form"):
@@ -72,23 +201,8 @@ elif page == "BLUEPRINT Builder":
                 permission_level=PermissionLevel(t_perm),
             )
         )
-
-    st.subheader("Add example test")
-    with st.form("example_form"):
-        ex_prompt = st.text_input("Prompt")
-        ex_expected = st.text_input("Expected response")
-        ex_cat = st.selectbox("Category", ["functional", "guardrail", "tool"])
-        add_example = st.form_submit_button("Add example")
-    if add_example and ex_prompt:
-        spec.examples.append(TestCase(prompt=ex_prompt, expected=ex_expected, category=ex_cat))
-
-    st.write("### BLUEPRINT scorecard")
-    checks = spec.to_scorecard()
-    st.metric("Score", spec.blueprint_score())
-    st.json(checks)
-
-    if submitted:
-        st.success("Draft saved in session.")
+        save_draft(spec)
+        st.success("Tool added and draft saved.")
 
 elif page == "Prompt Preview":
     prompt = render_system_prompt(spec)

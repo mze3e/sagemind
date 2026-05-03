@@ -26,6 +26,16 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_name TEXT NOT NULL UNIQUE,
+                spec_json TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
 
 
 def save_version(spec: AgentSpec, version: str, author: str, change_summary: str) -> None:
@@ -79,3 +89,34 @@ def load_latest_spec(agent_name: str) -> AgentSpec | None:
         return None
     data = json.loads(row[0])
     return AgentSpec.model_validate(data)
+
+
+def save_draft(spec: AgentSpec) -> None:
+    agent_name = spec.agent_name.strip() or "untitled-agent"
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_drafts (agent_name, spec_json, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(agent_name)
+            DO UPDATE SET spec_json = excluded.spec_json, updated_at = CURRENT_TIMESTAMP
+            """,
+            (agent_name, spec.model_dump_json(indent=2)),
+        )
+
+
+def load_draft(agent_name: str) -> AgentSpec | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT spec_json FROM agent_drafts WHERE agent_name = ?",
+            (agent_name,),
+        ).fetchone()
+    if not row:
+        return None
+    return AgentSpec.model_validate(json.loads(row[0]))
+
+
+def list_drafts() -> list[str]:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT agent_name FROM agent_drafts ORDER BY updated_at DESC").fetchall()
+    return [r[0] for r in rows]
