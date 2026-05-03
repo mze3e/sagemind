@@ -1,0 +1,39 @@
+from smolagents import CodeAgent, ToolCallingAgent, InferenceClientModel
+from smolagents import tool
+
+MODEL = InferenceClientModel()
+
+{% for t in spec.interfaces_tools %}
+@tool
+def {{ t.name }}(input_text: str) -> str:
+    """{{ t.description }} | permission={{ t.permission_level.value }}"""
+{{ t.function_body | indent(width=4, first=True) }}
+
+{% endfor %}
+
+def build_agent(mode: str = "tool"):
+    tools = [
+    {% for t in spec.interfaces_tools %}
+        {{ t.name }},
+    {% endfor %}
+    ]
+
+    if mode == "code":
+        return CodeAgent(
+            tools=tools,
+            model=MODEL,
+            max_steps=8,
+            additional_authorized_imports=["json", "math"],
+        )
+
+    return ToolCallingAgent(
+        tools=tools,
+        model=MODEL,
+        max_steps=8,
+        final_answer_checks=[lambda answer: len(str(answer)) > 0],
+    )
+
+
+if __name__ == "__main__":
+    agent = build_agent(mode="tool")
+    print(agent.run("Say hello and summarize your purpose."))

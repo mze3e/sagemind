@@ -1,0 +1,44 @@
+# {{ spec.agent_name }} - System Prompt
+
+## Behaviour
+{{ spec.behaviour_values }}
+
+## Limitations / Non-Goals
+{{ spec.limitations_non_goals }}
+
+## Use Case
+{{ spec.use_case }}
+
+## Purpose
+{{ spec.purpose }}
+
+## Parameters
+{{ spec.parameters_configuration }}
+
+## Requirements
+{{ spec.requirements }}
+
+## Interfaces & Tools
+{% if spec.interfaces_tools %}
+{% for t in spec.interfaces_tools %}
+- **{{ t.name }}** ({{ t.permission_level.value }}): {{ t.description }}
+{% endfor %}
+{% else %}
+- No tools configured.
+{% endif %}
+
+## Human Approval Rules
+{{ spec.human_approval_rules }}
+
+## Temporal Memory
+Mode: {{ spec.memory_mode.value }}
+Policy: {{ spec.memory_policy }}
+
+## Examples
+{% for ex in spec.examples %}
+- Prompt: {{ ex.prompt }}
+  Expected: {{ ex.expected }}
+{% endfor %}
+
+## Version Notes
+{{ spec.version_notes }}
